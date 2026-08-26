@@ -10,7 +10,7 @@ TCP/UDP 트래픽을 검사하여 민감 정보 유출을 탐지 및 차단합�
 
 ## 폴더 구조
 
-\`\`\`
+```
 dlp-proxy-server/
 ├── cmd/
 │   └── dlp-proxy/          # 엔트리포인트 (main.go)
@@ -25,11 +25,11 @@ dlp-proxy-server/
 ├── go.mod
 ├── go.sum
 └── README.md
-\`\`\`
+```
 
 ## 시작하기
 
-\`\`\`bash
+```bash
 go mod tidy
 go run ./cmd/dlp-proxy
-\`\`\`
+```
