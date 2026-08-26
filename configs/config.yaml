@@ -1,0 +1,22 @@
+# DLP Proxy Server 설정 (로컬/데모 기본값)
+
+listen:
+  tcp_addr: ":8443" # TCP/TLS(HTTP1.1, HTTP2) 프록시 리스닝 주소
+  udp_addr: ":8443" # UDP/QUIC(HTTP3) 프록시 리스닝 주소
+
+dlp_server:
+  addr: "localhost:50051" # FastAPI DLP 서버 gRPC 주소
+  timeout: "3s"
+
+ca:
+  cert_path: "./certs/ca.pem"
+  key_path: "./certs/ca-key.pem"
+
+# 검사(MITM) 대상 도메인 목록 (임시)
+allowlist:
+  - "chatgpt.com"
+  - "claude.ai"
+  - "gemini.google.com"
+
+# DLP 서버가 타임아웃/장애일 때의 동작: "closed"(기본, 차단) | "open"(통과)
+fail_policy: "closed"
