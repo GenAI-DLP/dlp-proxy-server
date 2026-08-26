@@ -42,13 +42,17 @@ func main() {
 	_ = issuer
 	_ = insp
 
-	waitForShutdown()
+	waitForShutdown(dlp)
 }
 
-func waitForShutdown() {
+func waitForShutdown(dlp *dlpclient.GRPCClient) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
 	log.Printf("종료 시그널 수신(%v), graceful shutdown 시작", sig)
-	// TODO: TCP/UDP 리스너 및 gRPC 커넥션 정리
+
+	// TODO: TCP/UDP 리스너 정리(Close/Shutdown)도 여기 추가
+	if err := dlp.Close(); err != nil {
+		log.Printf("DLP 서버 gRPC 커넥션 종료 중 에러: %v", err)
+	}
 }
