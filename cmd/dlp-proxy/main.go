@@ -1,54 +1,43 @@
+// cmd/dlp-proxy/main.go
 package main
 
 import (
-	"flag"
 	"log"
-	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/GenAI-DLP/dlp-proxy-server/internal/cert"
 	"github.com/GenAI-DLP/dlp-proxy-server/internal/config"
 	"github.com/GenAI-DLP/dlp-proxy-server/internal/dlpclient"
 	"github.com/GenAI-DLP/dlp-proxy-server/internal/inspector"
+	quicproxy "github.com/GenAI-DLP/dlp-proxy-server/internal/proxy/quic"
 )
 
 func main() {
-	configPath := flag.String("config", "configs/config.yaml", "설정 파일 경로")
-	flag.Parse()
-
-	cfg, err := config.Load(*configPath)
+	// 1. 설정 로드 (configs/config.yaml)
+	cfg, err := config.Load("configs/config.yaml")
 	if err != nil {
 		log.Fatalf("설정 로드 실패: %v", err)
 	}
 
+	// 2. 사내 루트 CA 로드 (없으면 cmd/gen-ca로 먼저 생성해야 함)
 	rootCA, err := cert.LoadRootCA(cfg.CA.CertPath, cfg.CA.KeyPath)
 	if err != nil {
 		log.Fatalf("루트 CA 로드 실패: %v", err)
 	}
 	issuer := cert.NewIssuer(rootCA)
 
+	// 3. FastAPI DLP 서버 gRPC 클라이언트 생성 (순수 통신 계층)
 	dlp, err := dlpclient.NewGRPCClient(cfg.DLPServer.Addr)
 	if err != nil {
 		log.Fatalf("DLP 서버 연결 실패: %v", err)
 	}
+	defer dlp.Close()
 
+	// 4. Inspector 생성 (DLP 서버 호출 + fail-policy 적용을 담당)
 	insp := inspector.New(dlp, cfg)
 
-	log.Printf("DLP Proxy Server 준비 완료 (fail_policy=%s, allowlist=%v)", cfg.FailPolicy, cfg.Allowlist)
-
-	// TODO(TCP 담당): internal/proxy/tcp 리스너를 cfg.Listen.TCPAddr, issuer, insp로 기동
-	// TODO(UDP 담당): internal/proxy/udp 리스너를 cfg.Listen.UDPAddr, issuer, insp로 기동
-	_ = issuer
-	_ = insp
-
-	waitForShutdown()
-}
-
-func waitForShutdown() {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigCh
-	log.Printf("종료 시그널 수신(%v), graceful shutdown 시작", sig)
-	// TODO: TCP/UDP 리스너 및 gRPC 커넥션 정리
+	// 5. QUIC(HTTP/3) 프록시 기동
+	log.Printf("DLP Proxy(QUIC) 기동 준비 완료, listen=%s", cfg.Listen.UDPAddr)
+	if err := quicproxy.Start(cfg, issuer, insp); err != nil {
+		log.Fatalf("QUIC 프록시 실행 실패: %v", err)
+	}
 }
