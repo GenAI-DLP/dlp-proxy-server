@@ -3,6 +3,9 @@
 > `internal/proxy/tcp` (투명 프록시 + MITM)가 실제로 동작하는지 로컬 PC에서 확인하는 방법입니다.
 > FastAPI DLP 서버가 아직 없으므로 `cmd/mock-dlp-server`로 대체합니다.
 > Windows + PowerShell 기준으로 작성했습니다.
+>
+> 참고: `go run ./cmd/dlp-proxy`는 TCP 리스너와 함께 QUIC(HTTP/3) 리스너(`internal/proxy/quic`, UDP `:8443`)도
+> 같이 띄웁니다. 이 가이드는 **TCP 경로만** 다룹니다
 
 ---
 
@@ -13,7 +16,7 @@
 | 터미널 | 실행 명령 | 역할 |
 |--------|-----------|------|
 | ① | `go run ./cmd/mock-dlp-server -action allow` | DLP 서버 대역 (기본 `:50051`) |
-| ② | `go run ./cmd/dlp-proxy` | TCP 프록시 (기본 `:8443`) — **①을 먼저 띄운 뒤에 실행할 것** (아래 "주의" 참고) |
+| ② | `go run ./cmd/dlp-proxy` | TCP·QUIC 프록시 (기본 `:8443`, 이 가이드는 TCP만 확인) — **①을 먼저 띄운 뒤에 실행할 것** (아래 "주의" 참고) |
 | ③ | curl 등 클라이언트 명령 실행용 | — |
 
 **주의(gRPC 재연결 백오프)**: `dlp-proxy`가 뜬 시점에 `mock-dlp-server`가 아직 안 떠 있으면, 첫 DLP 호출이 실패하면서 gRPC 클라이언트가 지수 백오프(최대 120초 간격)로 재연결을 시도합니다. 그 상태에서 `mock-dlp-server`를 나중에 띄워도 다음 백오프 주기가 돌아올 때까지 계속 실패한 것처럼 보일 수 있습니다 — 항상 **①(mock) → ②(proxy) 순서로 띄우세요.** 순서를 놓쳤다면 ②를 Ctrl+C 후 재실행하면 바로 해결됩니다.
