@@ -1,5 +1,4 @@
-// cmd/gen-ca는 로컬 개발/데모용 MITM 루트 CA(인증서+개인키)를 생성합니다.
-//
+// cmd/gen-ca/main.go
 // 주의: 생성되는 개인키(ca-key.pem) git 커밋 금지
 package main
 
@@ -17,9 +16,11 @@ import (
 	"time"
 )
 
+// gen-ca는 로컬/개발 환경에서 DLP 프록시의 MITM에 쓸 자체 서명 루트 CA를 생성합니다.
+// 운영 환경에서는 사내 PKI 팀이 발급한 정식 CA를 써야 하며, 이 도구는 개발용입니다.
 func main() {
 	outDir := flag.String("out", "certs", "생성된 CA 인증서/개인키를 저장할 디렉토리")
-	commonName := flag.String("cn", "GenAI-DLP Local Dev Root CA (배포 금지)", "루트 CA Common Name")
+	commonName := flag.String("cn", "DLP Proxy Local Root CA (DEV ONLY)", "루트 CA Common Name")
 	flag.Parse()
 
 	if err := run(*outDir, *commonName); err != nil {
@@ -54,10 +55,10 @@ func run(outDir, commonName string) error {
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   commonName,
-			Organization: []string{"GenAI-DLP (로컬 개발용)"},
+			Organization: []string{"GenAI-DLP"},
 		},
 		NotBefore:             time.Now().Add(-1 * time.Hour),
-		NotAfter:               time.Now().AddDate(2, 0, 0), // 2년
+		NotAfter:              time.Now().AddDate(5, 0, 0), // 5년
 		IsCA:                  true,
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature | x509.KeyUsageCRLSign,
 		BasicConstraintsValid: true,
