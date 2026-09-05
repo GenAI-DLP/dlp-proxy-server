@@ -1,3 +1,4 @@
+// internal/proxy/quic/handler.go
 package quic
 
 import (
@@ -44,6 +45,7 @@ func (p *DLPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch result.Action {
 	case inspector.ActionBlock:
 		log.Printf("quic: 요청 차단(session=%s, host=%s, reason=%s)", sessionID, r.Host, result.Reason)
+		w.Header().Set("X-Dlp-Input-Action", result.Action)
 		http.Error(w, "요청이 보안 정책에 의해 차단되었습니다: "+result.Reason, http.StatusForbidden)
 		return
 	case inspector.ActionTransform:
@@ -97,6 +99,8 @@ func (p *DLPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch outResult.Action {
 	case inspector.ActionBlock:
 		log.Printf("quic: 응답 차단(session=%s, host=%s, reason=%s)", sessionID, r.Host, outResult.Reason)
+		w.Header().Set("X-Dlp-Input-Action", result.Action)
+		w.Header().Set("X-Dlp-Output-Action", outResult.Action)
 		http.Error(w, "응답이 보안 정책에 의해 차단되었습니다: "+outResult.Reason, http.StatusForbidden)
 		return
 	case inspector.ActionTransform:
@@ -110,6 +114,8 @@ func (p *DLPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 안 맞추면 클라이언트가 마스킹된 바디를 다 못 받거나 다음 응답을 기다리며 멈출 수 있다.
 	w.Header().Set("Content-Length", strconv.Itoa(len(respBody)))
 	w.Header().Del("Transfer-Encoding")
+	w.Header().Set("X-Dlp-Input-Action", result.Action)
+	w.Header().Set("X-Dlp-Output-Action", outResult.Action)
 
 	log.Printf(
 		"quic: 처리 완료(session=%s, host=%s, input_action=%s, output_action=%s, input_fail_policy=%v, output_fail_policy=%v)",
