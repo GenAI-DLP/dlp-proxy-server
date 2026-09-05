@@ -17,6 +17,7 @@ allowlist:
   - "chatgpt.com"
   - "claude.ai"
   - "gemini.google.com"
+  - "generativelanguage.googleapis.com"
 
 # DLP 서버가 타임아웃/장애일 때의 동작: "closed"(기본, 차단) | "open"(통과)
 fail_policy: "closed"
