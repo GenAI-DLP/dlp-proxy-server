@@ -90,12 +90,15 @@ func (s *Server) inspect(client net.Conn, target *Target) {
 	reqResult, err := s.inspector.Enforce(ctx, sessionID, "input", req.Method, req.URL.Path, req.Header, reqBody)
 	if err != nil {
 		log.Printf("tcp: inspector.Enforce(input) 실패(%s): %v", target.Host, err)
-		writeBlockedOrLog(tlsConn, "internal_error")
+		writeBlockedOrLog(tlsConn, "internal_error", nil)
 		return
 	}
 	if reqResult.Action == inspector.ActionBlock {
-		log.Printf("tcp: 요청 차단(session=%s, host=%s, reason=%s)", sessionID, target.Host, reqResult.Reason)
-		writeBlockedOrLog(tlsConn, reqResult.Reason)
+		log.Printf("tcp: 요청 차단(session=%s, host=%s, reason=%s, fail_policy=%v)",
+			sessionID, target.Host, reqResult.Reason, reqResult.FailPolicyApplied)
+		writeBlockedOrLog(tlsConn, reqResult.Reason, map[string]string{
+			"X-Dlp-Input-Action": reqResult.Action,
+		})
 		return
 	}
 	if reqResult.Action == inspector.ActionTransform {
@@ -105,22 +108,27 @@ func (s *Server) inspect(client net.Conn, target *Target) {
 	upstreamResp, respBody, err := s.forwardToUpstream(req, target, reqBody)
 	if err != nil {
 		log.Printf("tcp: 업스트림(%s) 요청 실패: %v", target.Addr(), err)
-		writeBlockedOrLog(tlsConn, "upstream_unreachable")
+		writeBlockedOrLog(tlsConn, "upstream_unreachable", nil)
 		return
 	}
 
 	respResult, err := s.inspector.Enforce(ctx, sessionID, "output", req.Method, req.URL.Path, upstreamResp.Header, respBody)
 	if err != nil {
 		log.Printf("tcp: inspector.Enforce(output) 실패(%s): %v", target.Host, err)
-		writeBlockedOrLog(tlsConn, "internal_error")
+		writeBlockedOrLog(tlsConn, "internal_error", map[string]string{
+			"X-Dlp-Input-Action": reqResult.Action,
+		})
 		return
 	}
 	if respResult.Action == inspector.ActionBlock {
-		log.Printf("tcp: 응답 차단(session=%s, host=%s, reason=%s)", sessionID, target.Host, respResult.Reason)
-		writeBlockedOrLog(tlsConn, respResult.Reason)
+		log.Printf("tcp: 응답 차단(session=%s, host=%s, reason=%s, fail_policy=%v)",
+			sessionID, target.Host, respResult.Reason, respResult.FailPolicyApplied)
+		writeBlockedOrLog(tlsConn, respResult.Reason, map[string]string{
+			"X-Dlp-Input-Action":  reqResult.Action,
+			"X-Dlp-Output-Action": respResult.Action,
+		})
 		return
 	}
-	
 	if respResult.Action == inspector.ActionTransform {
 		respBody = respResult.TransformedBody
 	}
@@ -131,7 +139,10 @@ func (s *Server) inspect(client net.Conn, target *Target) {
 		reqResult.FailPolicyApplied, respResult.FailPolicyApplied,
 	)
 
-	if err := writeResponse(tlsConn, upstreamResp, respBody); err != nil {
+	if err := writeResponse(tlsConn, upstreamResp, respBody, map[string]string{
+		"X-Dlp-Input-Action":  reqResult.Action,
+		"X-Dlp-Output-Action": respResult.Action,
+	}); err != nil {
 		log.Printf("tcp: 클라이언트로 응답 전송 실패(%s): %v", target.Host, err)
 	}
 }
@@ -179,22 +190,28 @@ func (s *Server) forwardToUpstream(orig *http.Request, target *Target, body []by
 
 	return resp, respBody, nil
 }
+
 // writeBlockedOrLog는 writeBlocked를 호출하고 실패하면 로그만 남깁니다
-func writeBlockedOrLog(w io.Writer, reason string) {
-	if err := writeBlocked(w, reason); err != nil {
+func writeBlockedOrLog(w io.Writer, reason string, extraHeaders map[string]string) {
+	if err := writeBlocked(w, reason, extraHeaders); err != nil {
 		log.Printf("tcp: 차단 응답 전송 실패: %v", err)
 	}
 }
 
 // writeBlocked는 DLP 판정으로 차단된 요청/응답 대신 클라이언트에 돌려줄
-// 간단한 403 응답을 작성합니다.
-func writeBlocked(w io.Writer, reason string) error {
+// 간단한 403 응답을 작성합니다. extraHeaders로 X-Dlp-*-Action 같은 최소
+// 판정 시그널을 실어 보낼 수 있다 (상세 reason은 여전히 로그에만 남긴다).
+func writeBlocked(w io.Writer, reason string, extraHeaders map[string]string) error {
 	body := fmt.Sprintf("blocked by DLP policy: %s", reason)
+	header := http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}}
+	for k, v := range extraHeaders {
+		header.Set(k, v)
+	}
 	resp := &http.Response{
 		StatusCode:    http.StatusForbidden,
 		ProtoMajor:    1,
 		ProtoMinor:    1,
-		Header:        http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+		Header:        header,
 		Body:          io.NopCloser(strings.NewReader(body)),
 		ContentLength: int64(len(body)),
 	}
@@ -202,11 +219,15 @@ func writeBlocked(w io.Writer, reason string) error {
 }
 
 // writeResponse는 업스트림 응답을 body(검사/치환 결과)로 교체해 클라이언트에 씁니다.
-func writeResponse(w io.Writer, resp *http.Response, body []byte) error {
+// extraHeaders로 X-Dlp-*-Action 같은 최소 판정 시그널을 함께 실어 보낼 수 있다.
+func writeResponse(w io.Writer, resp *http.Response, body []byte, extraHeaders map[string]string) error {
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
 	resp.TransferEncoding = nil
 	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	resp.Header.Del("Transfer-Encoding")
+	for k, v := range extraHeaders {
+		resp.Header.Set(k, v)
+	}
 	return resp.Write(w)
 }
