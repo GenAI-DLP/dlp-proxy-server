@@ -2,7 +2,10 @@
 package main
 
 import (
+	"errors"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -41,7 +44,7 @@ func main() {
 	// TCP 프록시 기동
 	tcpServer := tcp.NewServer(cfg, issuer, insp)
 	go func() {
-		if err := tcpServer.ListenAndServe(); err != nil {
+		if err := tcpServer.ListenAndServe(); err != nil && !errors.Is(err, net.ErrClosed) {
 			log.Fatalf("TCP 프록시 리스너 실패: %v", err)
 		}
 	}()
@@ -52,7 +55,7 @@ func main() {
 		log.Fatalf("QUIC 프록시 준비 실패: %v", err)
 	}
 	go func() {
-		if err := quicServer.ListenAndServe(); err != nil {
+		if err := quicServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("QUIC 프록시 리스너 실패: %v", err)
 		}
 	}()
