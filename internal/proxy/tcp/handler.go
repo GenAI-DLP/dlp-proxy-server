@@ -120,9 +120,16 @@ func (s *Server) inspect(client net.Conn, target *Target) {
 		writeBlockedOrLog(tlsConn, respResult.Reason)
 		return
 	}
+	
 	if respResult.Action == inspector.ActionTransform {
 		respBody = respResult.TransformedBody
 	}
+
+	log.Printf(
+		"tcp: 처리 완료(session=%s, host=%s, input_action=%s, output_action=%s, input_fail_policy=%v, output_fail_policy=%v)",
+		sessionID, target.Host, reqResult.Action, respResult.Action,
+		reqResult.FailPolicyApplied, respResult.FailPolicyApplied,
+	)
 
 	if err := writeResponse(tlsConn, upstreamResp, respBody); err != nil {
 		log.Printf("tcp: 클라이언트로 응답 전송 실패(%s): %v", target.Host, err)
@@ -132,7 +139,8 @@ func (s *Server) inspect(client net.Conn, target *Target) {
 // forwardToUpstream은 실제 목적지에 새 TLS 연결을 맺어 요청을 전달하고,
 // 응답 본문까지 전부 읽어서 돌려줍니다.
 func (s *Server) forwardToUpstream(orig *http.Request, target *Target, body []byte) (*http.Response, []byte, error) {
-	upstreamConn, err := tls.Dial("tcp", target.Addr(), &tls.Config{
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	upstreamConn, err := tls.DialWithDialer(dialer, "tcp", target.Addr(), &tls.Config{
 		ServerName: target.Host,
 		NextProtos: []string{"http/1.1"},
 	})
@@ -140,6 +148,13 @@ func (s *Server) forwardToUpstream(orig *http.Request, target *Target, body []by
 		return nil, nil, fmt.Errorf("업스트림 TLS 연결 실패: %w", err)
 	}
 	defer upstreamConn.Close()
+
+	// 연결은 됐는데 응답이 안 오거나 느리게 트리클되는 경우까지 방어.
+	// 문서 §2.4의 지연 예산(soft budget 2.5초)은 dlp-server 호출에만 적용되고
+	// 업스트림 자체엔 없었으므로, 별도로 30초 상한을 둔다.
+	if err := upstreamConn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return nil, nil, fmt.Errorf("업스트림 데드라인 설정 실패: %w", err)
+	}
 
 	outReq := orig.Clone(context.Background())
 	outReq.RequestURI = ""
@@ -164,7 +179,6 @@ func (s *Server) forwardToUpstream(orig *http.Request, target *Target, body []by
 
 	return resp, respBody, nil
 }
-
 // writeBlockedOrLog는 writeBlocked를 호출하고 실패하면 로그만 남깁니다
 func writeBlockedOrLog(w io.Writer, reason string) {
 	if err := writeBlocked(w, reason); err != nil {
