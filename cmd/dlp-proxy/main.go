@@ -20,7 +20,10 @@ import (
 )
 
 func main() {
-	cfg, err := config.Load("configs/config.yaml")
+	configPath := flag.String("config", "configs/config.yaml", "설정 파일 경로")
+	flag.Parse()
+
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatalf("설정 로드 실패: %v", err)
 	}

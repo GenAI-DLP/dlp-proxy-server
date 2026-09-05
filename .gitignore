@@ -6,4 +6,6 @@
 .idea/
 .vscode/
 
-certs/
+/certs/
+*.pem
+*.key

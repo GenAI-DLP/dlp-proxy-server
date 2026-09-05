@@ -1,4 +1,5 @@
 // cmd/gen-ca/main.go
+// 주의: 생성되는 개인키(ca-key.pem) git 커밋 금지
 package main
 
 import (
@@ -7,7 +8,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"log"
+	"flag"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -17,55 +19,79 @@ import (
 // gen-ca는 로컬/개발 환경에서 DLP 프록시의 MITM에 쓸 자체 서명 루트 CA를 생성합니다.
 // 운영 환경에서는 사내 PKI 팀이 발급한 정식 CA를 써야 하며, 이 도구는 개발용입니다.
 func main() {
-	outDir := "certs"
-	if err := os.MkdirAll(outDir, 0755); err != nil {
-		log.Fatalf("certs 디렉터리 생성 실패: %v", err)
+	outDir := flag.String("out", "certs", "생성된 CA 인증서/개인키를 저장할 디렉토리")
+	commonName := flag.String("cn", "DLP Proxy Local Root CA (DEV ONLY)", "루트 CA Common Name")
+	flag.Parse()
+
+	if err := run(*outDir, *commonName); err != nil {
+		fmt.Fprintln(os.Stderr, "CA 생성 실패:", err)
+		os.Exit(1)
+	}
+}
+
+func run(outDir, commonName string) error {
+	if err := os.MkdirAll(outDir, 0o700); err != nil {
+		return fmt.Errorf("출력 디렉토리 생성 실패: %w", err)
 	}
 
-	key, err := rsa.GenerateKey(rand.Reader, 4096) // 루트 CA는 leaf보다 긴 키 사용
+	certPath := filepath.Join(outDir, "ca.pem")
+	keyPath := filepath.Join(outDir, "ca-key.pem")
+
+	if _, err := os.Stat(certPath); err == nil {
+		return fmt.Errorf("%s가 이미 존재합니다. 기존 CA를 덮어쓰면 신뢰 저장소에 이미 설치된 인증서가 무효화됩니다 — 지우고 다시 실행하세요", certPath)
+	}
+
+	key, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
-		log.Fatalf("CA 키 생성 실패: %v", err)
+		return fmt.Errorf("루트 키 생성 실패: %w", err)
 	}
 
 	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
 	if err != nil {
-		log.Fatalf("일련번호 생성 실패: %v", err)
+		return fmt.Errorf("시리얼 번호 생성 실패: %w", err)
 	}
 
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   "DLP Proxy Local Root CA (DEV ONLY)",
+			CommonName:   commonName,
 			Organization: []string{"GenAI-DLP"},
 		},
 		NotBefore:             time.Now().Add(-1 * time.Hour),
 		NotAfter:              time.Now().AddDate(5, 0, 0), // 5년
 		IsCA:                  true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature | x509.KeyUsageCRLSign,
 		BasicConstraintsValid: true,
 	}
 
-	derBytes, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
-		log.Fatalf("CA 인증서 생성 실패: %v", err)
+		return fmt.Errorf("인증서 서명 실패: %w", err)
 	}
 
-	certPath := filepath.Join(outDir, "ca.pem")
-	certFile, err := os.Create(certPath)
-	if err != nil {
-		log.Fatalf("%s 생성 실패: %v", certPath, err)
+	if err := writePEM(certPath, "CERTIFICATE", der, 0o644); err != nil {
+		return err
 	}
-	defer certFile.Close()
-	pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-
-	keyPath := filepath.Join(outDir, "ca-key.pem")
-	keyFile, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600) // 개인키는 권한 제한
-	if err != nil {
-		log.Fatalf("%s 생성 실패: %v", keyPath, err)
+	if err := writePEM(keyPath, "RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(key), 0o600); err != nil {
+		return err
 	}
-	defer keyFile.Close()
-	pem.Encode(keyFile, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 
-	log.Printf("루트 CA 생성 완료: %s, %s", certPath, keyPath)
-	log.Println("주의: 이 CA는 개발/테스트 전용입니다. 직원 PC에 신뢰하도록 설치해야 MITM이 성립합니다.")
+	fmt.Printf(`루트 CA 생성 완료:
+  인증서: %s  (신뢰 저장소에 설치, 배포용 — 민감하지 않음)
+  개인키: %s  (반드시 로컬에만 보관, 절대 git에 올리지 말 것)
+
+다음 단계 (Windows 신뢰 저장소에 설치, 로컬 브라우저 테스트용):
+  PowerShell에서 관리자 권한으로:
+    Import-Certificate -FilePath "%s" -CertStoreLocation Cert:\LocalMachine\Root
+`, certPath, keyPath, certPath)
+	return nil
+}
+
+func writePEM(path, blockType string, der []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return fmt.Errorf("%s 쓰기 실패: %w", path, err)
+	}
+	defer f.Close()
+	return pem.Encode(f, &pem.Block{Type: blockType, Bytes: der})
 }
