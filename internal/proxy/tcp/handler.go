@@ -202,7 +202,7 @@ func writeBlockedOrLog(w io.Writer, reason string, extraHeaders map[string]strin
 // 간단한 403 응답을 작성합니다. extraHeaders로 X-Dlp-*-Action 같은 최소
 // 판정 시그널을 실어 보낼 수 있다 (상세 reason은 여전히 로그에만 남긴다).
 func writeBlocked(w io.Writer, reason string, extraHeaders map[string]string) error {
-	body := fmt.Sprintf("blocked by DLP policy: %s", reason)
+	body := "blocked by DLP policy"          // 클라이언트에는 일반화된 메시지만
 	header := http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}}
 	for k, v := range extraHeaders {
 		header.Set(k, v)
