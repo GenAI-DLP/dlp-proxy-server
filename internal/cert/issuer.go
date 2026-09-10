@@ -61,8 +61,8 @@ func (iss *Issuer) issue(sni string) (*tls.Certificate, error) {
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: sni},
 		DNSNames:     []string{sni},
-		NotBefore:    time.Now().Add(-1 * time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour), // 짧게 잡고 캐시 만료 시 재발급 권장
+		NotBefore: time.Now().Add(-1 * time.Hour),
+		NotAfter:  time.Now().Add(90 * 24 * time.Hour), // 90일 — 캐시 만료 시 재발급 로직이 없어 짧은 기간은 위험
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
