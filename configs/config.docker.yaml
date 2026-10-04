@@ -1,0 +1,22 @@
+# DLP Proxy Server 설정 (Docker Compose 전용)
+# 로컬 비-도커 개발용 configs/config.yaml과 분리 — 컨테이너 네트워크 주소만 다름
+
+listen:
+  tcp_addr: ":8443"
+  udp_addr: ":8443"
+
+dlp_server:
+  addr: "dlp-server:50051"   # 컨테이너 네트워크에서는 서비스명으로 접근 (localhost 아님)
+  timeout: "3s"
+
+ca:
+  cert_path: "./certs/ca.pem"     # WORKDIR /app 기준, Dockerfile에서 /app/certs로 복사됨
+  key_path: "./certs/ca-key.pem"
+
+allowlist:
+  - "chatgpt.com"
+  - "claude.ai"
+  - "gemini.google.com"
+  - "generativelanguage.googleapis.com"
+
+fail_policy: "closed"
